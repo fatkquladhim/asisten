@@ -1,12 +1,12 @@
 import type { ParsedIntent, AgentState } from '@/shared/types';
+import type { LLMClient } from '@/shared/llm';
 import { logger } from '@/shared/logger';
 
 export class MemoryInjector {
-  async retrieve(intent: ParsedIntent): Promise<AgentState['memory']> {
-    logger.debug(
-      { domain: intent.domain, entities: intent.entities },
-      'MemoryInjector.retrieve',
-    );
+  constructor(private llm: LLMClient) {}
+
+  async retrieve(_intent: ParsedIntent): Promise<AgentState['memory']> {
+    logger.debug('MemoryInjector.retrieve — pgvector query not yet wired');
 
     return { episodic: [], semantic: [] };
   }

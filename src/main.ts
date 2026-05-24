@@ -3,6 +3,7 @@ import { logger } from '@/shared/logger';
 import { getPool, closeDb } from '@/config/database';
 import { quantQueue, closeQueues } from '@/queue/index';
 import { quantWorker, closeWorkers } from '@/queue/workers';
+import { LLMClient } from '@/shared/llm';
 import { IndodaxClient } from '@/agents/quant/tools/indodax-api';
 import { QuantAgent } from '@/agents/quant/index';
 import { AgentRegistry } from '@/agents/registry';
@@ -24,6 +25,13 @@ async function main(): Promise<void> {
   dbClient.release();
   logger.info('Database connection verified');
 
+  const llm = new LLMClient();
+  if (llm.isConfigured) {
+    logger.info('LLM client configured');
+  } else {
+    logger.warn('OPENAI_API_KEY not set — LLM features disabled');
+  }
+
   const indodax = new IndodaxClient();
   if (indodax.isConfigured) {
     logger.info('Indodax client configured with API keys');
@@ -35,12 +43,12 @@ async function main(): Promise<void> {
   registry.register('quant', new QuantAgent(indodax));
 
   const orchestrator = new Orchestrator(
-    new SemanticRouter(),
-    new Planner(),
-    new ContextWindow(),
-    new MemoryInjector(),
+    new SemanticRouter(llm),
+    new Planner(llm),
+    new ContextWindow(llm),
+    new MemoryInjector(llm),
     new Dispatcher(),
-    new Synthesizer(),
+    new Synthesizer(llm),
     registry,
   );
 
