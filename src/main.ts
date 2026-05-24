@@ -5,6 +5,7 @@ import { quantQueue, closeQueues } from '@/queue/index';
 import { quantWorker, closeWorkers } from '@/queue/workers';
 import { EmbeddingClient, MemoryStore } from '@/memory/index';
 import { LLMClient } from '@/shared/llm';
+import { CyberAgent } from '@/agents/cyber/index';
 import { ErpAgent } from '@/agents/erp/index';
 import { IndodaxClient } from '@/agents/quant/tools/indodax-api';
 import { QuantAgent } from '@/agents/quant/index';
@@ -52,6 +53,7 @@ async function main(): Promise<void> {
   const registry = new AgentRegistry();
   registry.register('quant', new QuantAgent(indodax));
   registry.register('erp', new ErpAgent());
+  registry.register('cyber', new CyberAgent());
 
   const orchestrator = new Orchestrator(
     new SemanticRouter(llm),
