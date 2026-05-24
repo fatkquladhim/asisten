@@ -12,6 +12,8 @@ const envSchema = z.object({
   BINANCE_SECRET_KEY: z.string().optional(),
   BYBIT_API_KEY: z.string().optional(),
   BYBIT_SECRET_KEY: z.string().optional(),
+  INDODAX_API_KEY: z.string().optional(),
+  INDODAX_SECRET_KEY: z.string().optional(),
   BURSA_API_KEY: z.string().optional(),
 });
 

@@ -1,19 +1,19 @@
 import type { ExecutionStep } from '@/shared/types';
 import { logger } from '@/shared/logger';
 
-export interface AgentBase {
+export interface AgentInterface {
   execute(step: ExecutionStep, context: Record<string, unknown>): Promise<unknown>;
 }
 
 export class AgentRegistry {
-  private agents = new Map<string, AgentBase>();
+  private agents = new Map<string, AgentInterface>();
 
-  register(name: string, agent: AgentBase): void {
+  register(name: string, agent: AgentInterface): void {
     this.agents.set(name, agent);
     logger.info({ agent: name }, 'Agent registered');
   }
 
-  get(name: string): AgentBase {
+  get(name: string): AgentInterface {
     const agent = this.agents.get(name);
     if (!agent) {
       throw new Error(`Agent "${name}" not found in registry`);
