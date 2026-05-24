@@ -3,6 +3,7 @@ import { logger } from '@/shared/logger';
 import { getPool, closeDb } from '@/config/database';
 import { quantQueue, closeQueues } from '@/queue/index';
 import { quantWorker, closeWorkers } from '@/queue/workers';
+import { EmbeddingClient, MemoryStore } from '@/memory/index';
 import { LLMClient } from '@/shared/llm';
 import { IndodaxClient } from '@/agents/quant/tools/indodax-api';
 import { QuantAgent } from '@/agents/quant/index';
@@ -32,6 +33,14 @@ async function main(): Promise<void> {
     logger.warn('OPENAI_API_KEY not set — LLM features disabled');
   }
 
+  const embedder = new EmbeddingClient();
+  const memoryStore = new MemoryStore(embedder);
+  if (embedder.isConfigured) {
+    logger.info('Embedding client configured — RAG memory active');
+  } else {
+    logger.warn('OPENAI_API_KEY not set — memory search disabled');
+  }
+
   const indodax = new IndodaxClient();
   if (indodax.isConfigured) {
     logger.info('Indodax client configured with API keys');
@@ -46,7 +55,7 @@ async function main(): Promise<void> {
     new SemanticRouter(llm),
     new Planner(llm),
     new ContextWindow(llm),
-    new MemoryInjector(llm),
+    new MemoryInjector(memoryStore),
     new Dispatcher(),
     new Synthesizer(llm),
     registry,
