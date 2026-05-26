@@ -5,6 +5,7 @@ import { quantQueue, closeQueues } from '@/queue/index';
 import { quantWorker, closeWorkers } from '@/queue/workers';
 import { EmbeddingClient, MemoryStore } from '@/memory/index';
 import { LLMClient } from '@/shared/llm';
+import { setupTradingScheduler, tradingCycleQueue } from '@/agents/quant/trading-scheduler';
 import { CyberAgent } from '@/agents/cyber/index';
 import { ErpAgent } from '@/agents/erp/index';
 import { IndodaxClient } from '@/agents/quant/tools/indodax-api';
@@ -50,6 +51,8 @@ async function main(): Promise<void> {
     logger.warn('Indodax API keys not configured — trade execution disabled');
   }
 
+  await setupTradingScheduler();
+
   const registry = new AgentRegistry();
   registry.register('quant', new QuantAgent(indodax));
   registry.register('erp', new ErpAgent());
@@ -82,6 +85,7 @@ async function main(): Promise<void> {
     server.close();
     await closeWorkers();
     await closeQueues();
+    await tradingCycleQueue.close();
     await closeDb();
     process.exit(0);
   };

@@ -5,6 +5,8 @@ import { logger } from '@/shared/logger';
 const BASE_URL = 'https://indodax.com';
 const TAPI_URL = 'https://indodax.com/tapi';
 
+// ── Public API Types ────────────────────────────────────────
+
 export interface IndodaxTicker {
   ticker: {
     high: string;
@@ -41,6 +43,29 @@ export interface IndodaxTradingViewHistory {
   v: number[];
 }
 
+export interface IndodaxPairInfo {
+  id: string;
+  symbol: string;
+  base_currency: string;
+  traded_currency: string;
+  description: string;
+}
+
+export interface IndodaxAllTickers {
+  tickers: Record<string, {
+    high: string;
+    low: string;
+    vol_asset: string;
+    vol_idr: string;
+    last: string;
+    buy: string;
+    sell: string;
+    server_time: number;
+  }>;
+}
+
+// ── Private API Types ───────────────────────────────────────
+
 export interface IndodaxTradeResponse {
   success: number;
   return: {
@@ -56,11 +81,61 @@ export interface IndodaxErrorResponse {
   error: string;
 }
 
+export interface IndodaxGetInfoResponse {
+  success: 1;
+  return: {
+    balance: Record<string, string>;
+    balance_hold: Record<string, string>;
+    address: Record<string, string>;
+  };
+}
+
+export interface IndodaxOpenOrder {
+  order_id: string;
+  submit_time: string;
+  price: string;
+  type: 'buy' | 'sell';
+  order_type: 'limit' | 'market';
+  remainder_idr: string;
+  remainder_coin: string;
+  amount_coin: string;
+  amount_coin_original: string;
+  status: string;
+}
+
+export interface IndodaxOpenOrdersResponse {
+  success: 1;
+  return: {
+    orders: IndodaxOpenOrder[];
+  };
+}
+
+export interface IndodaxCancelOrderResponse {
+  success: 1;
+  return: {
+    order_id: string;
+    type: 'buy' | 'sell';
+    amount_coin: string;
+    remainder_coin: string;
+    fee: string;
+  };
+}
+
+// ── In-Memory Cache ─────────────────────────────────────────
+
+interface CacheEntry {
+  data: unknown;
+  expiry: number;
+}
+
+// ── Client ──────────────────────────────────────────────────
+
 export class IndodaxClient {
   private apiKey: string;
   private secretKey: string;
   private lastRequestTime = 0;
   private readonly minInterval = 1000;
+  private cache = new Map<string, CacheEntry>();
 
   constructor() {
     this.apiKey = env.INDODAX_API_KEY ?? '';
@@ -80,6 +155,19 @@ export class IndodaxClient {
     this.lastRequestTime = Date.now();
   }
 
+  private getCached<T>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (entry && Date.now() < entry.expiry) return entry.data as T;
+    this.cache.delete(key);
+    return null;
+  }
+
+  private setCached(key: string, data: unknown, ttlMs: number): void {
+    this.cache.set(key, { data, expiry: Date.now() + ttlMs });
+  }
+
+  // ── Public API ──────────────────────────────────────────
+
   async publicRequest<T>(endpoint: string): Promise<T> {
     await this.rateLimit();
 
@@ -96,6 +184,52 @@ export class IndodaxClient {
 
     return response.json() as Promise<T>;
   }
+
+  /** GET /api/depth/:pair — cache 30s */
+  async getDepth(pair: string): Promise<IndodaxDepth> {
+    const key = `depth_${pair}`;
+    const cached = this.getCached<IndodaxDepth>(key);
+    if (cached) return cached;
+    const data = await this.publicRequest<IndodaxDepth>(`/api/depth/${pair}`);
+    this.setCached(key, data, 30_000);
+    return data;
+  }
+
+  /** GET /api/pairs — cache 1h */
+  async getAllPairs(): Promise<IndodaxPairInfo[]> {
+    const key = 'all_pairs';
+    const cached = this.getCached<IndodaxPairInfo[]>(key);
+    if (cached) return cached;
+    const raw = await this.publicRequest<unknown[]>('/api/pairs');
+    const pairs = (raw as any[]).map((p) => ({
+      id: p.id || '',
+      symbol: (p.traded_currency || '').toLowerCase(),
+      base_currency: (p.base_currency || '').toLowerCase(),
+      traded_currency: (p.traded_currency || '').toLowerCase(),
+      description: p.description || '',
+    })).filter((p: IndodaxPairInfo) => p.base_currency === 'idr' && p.traded_currency !== 'idr');
+    this.setCached(key, pairs, 3_600_000);
+    return pairs;
+  }
+
+  /** GET ticker_all — cache 60s, single call for every pair ticker */
+  async getAllTickers(): Promise<Record<string, any>> {
+    const key = 'all_tickers';
+    const cached = this.getCached<Record<string, any>>(key);
+    if (cached) return cached;
+    const data = await this.publicRequest<IndodaxAllTickers>('/api/ticker_all');
+    const tickers = data.tickers || {};
+    this.setCached(key, tickers, 60_000);
+    return tickers;
+  }
+
+  /** GET /api/server_time */
+  async getServerTime(): Promise<number> {
+    const data = await this.publicRequest<{ server_time: number }>('/api/server_time');
+    return data.server_time;
+  }
+
+  // ── Private API (TAPI) ──────────────────────────────────
 
   async privateRequest<T>(
     method: string,
@@ -146,5 +280,56 @@ export class IndodaxClient {
     }
 
     return data as T;
+  }
+
+  /** getInfo — account balances */
+  async getInfo(): Promise<IndodaxGetInfoResponse['return']> {
+    const resp = await this.privateRequest<IndodaxGetInfoResponse>('getInfo');
+    return resp.return;
+  }
+
+  /** openOrders — list open orders, optionally filtered by pair */
+  async openOrders(pair?: string): Promise<IndodaxOpenOrder[]> {
+    const params: Record<string, string | number> = {};
+    if (pair) params['pair'] = pair;
+    const resp = await this.privateRequest<IndodaxOpenOrdersResponse>('openOrders', params);
+    return resp.return.orders;
+  }
+
+  /** cancelOrder — cancel an existing order */
+  async cancelOrder(pair: string, orderId: string, type: 'buy' | 'sell'): Promise<IndodaxCancelOrderResponse['return']> {
+    const params = { pair, order_id: orderId, type };
+    const resp = await this.privateRequest<IndodaxCancelOrderResponse>('cancelOrder', params);
+    return resp.return;
+  }
+
+  /** trade — place a limit order (handles sub-rupiah prices) */
+  async trade(
+    pair: string,
+    type: 'buy' | 'sell',
+    price: number,
+    amount: number,
+  ): Promise<IndodaxTradeResponse['return']> {
+    if (type === 'buy' && amount < 10000) {
+      throw new Error(`Minimum buy amount is Rp 10,000 (requested: Rp ${amount})`);
+    }
+
+    const cleanPrice = price >= 1 ? Math.floor(price) : parseFloat(price.toFixed(8));
+
+    if (cleanPrice <= 0) {
+      throw new Error(`Invalid price: ${price} for pair ${pair}`);
+    }
+
+    const params: Record<string, string | number> = { pair, type, price: cleanPrice };
+
+    const coin = pair.split('_')[0] ?? '';
+    if (type === 'buy') {
+      params['idr'] = Math.floor(amount);
+    } else {
+      params[coin] = parseFloat(amount.toFixed(8));
+    }
+
+    const resp = await this.privateRequest<IndodaxTradeResponse>('trade', params);
+    return resp.return;
   }
 }

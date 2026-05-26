@@ -1,7 +1,5 @@
-import { env } from '@/config/index';
+import { env, OPENAI_BASE_URL } from '@/config/index';
 import { logger } from '@/shared/logger';
-
-const OPENAI_BASE = 'https://api.openai.com/v1';
 
 export interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
@@ -17,15 +15,21 @@ export interface CompletionOptions {
 
 export class LLMClient {
   private apiKey: string;
+  private baseUrl: string;
   private defaultModel: string;
 
   constructor() {
-    this.apiKey = env.OPENAI_API_KEY ?? '';
-    this.defaultModel = 'gpt-4o-mini';
+    this.apiKey = env.OPENAI_API_KEY || env.SUMOPOD_API_KEY || '';
+    this.baseUrl = env.SUMOPOD_BASE_URL || OPENAI_BASE_URL;
+    this.defaultModel = this.baseUrl === OPENAI_BASE_URL ? 'gpt-4o-mini' : 'qwen/qwen3-30b-a3b-instruct-2507';
   }
 
   get isConfigured(): boolean {
     return this.apiKey.length > 0;
+  }
+
+  get provider(): string {
+    return this.baseUrl === OPENAI_BASE_URL ? 'openai' : 'sumopod';
   }
 
   async generateCompletion(
@@ -61,10 +65,10 @@ export class LLMClient {
       body['response_format'] = { type: 'json_object' };
     }
 
-    logger.debug({ model, responseFormat, systemPromptLength: systemPrompt.length }, 'LLM request');
+    logger.debug({ model, provider: this.provider, responseFormat, systemPromptLength: systemPrompt.length }, 'LLM request');
 
     try {
-      const response = await fetch(`${OPENAI_BASE}/chat/completions`, {
+      const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,

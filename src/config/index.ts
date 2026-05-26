@@ -15,6 +15,10 @@ const envSchema = z.object({
   INDODAX_API_KEY: z.string().optional(),
   INDODAX_SECRET_KEY: z.string().optional(),
   BURSA_API_KEY: z.string().optional(),
+  SUMOPOD_API_KEY: z.string().optional(),
+  SUMOPOD_BASE_URL: z.string().url().optional(),
 });
 
 export const env = envSchema.parse(process.env);
+
+export const OPENAI_BASE_URL = 'https://api.openai.com/v1';
