@@ -37,7 +37,11 @@ git pull origin master || git clone https://github.com/fatkquladhim/asisten.git
 echo "Installing npm dependencies..."
 npm install
 
-# 7. Create .env
+# 7. Build
+echo "Building app..."
+npm run build
+
+# 8. Create .env
 if [ ! -f .env ]; then
   echo "Creating .env..."
   cp .env.example .env

@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "tsc",
-    "start": "node dist/main.js",
+    "start": "node --loader tsconfig-paths/register dist/main.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -37,6 +37,7 @@
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.1",
     "drizzle-kit": "^0.30.0",
+    "tsconfig-paths": "^4.2.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
