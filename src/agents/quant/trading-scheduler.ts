@@ -7,6 +7,8 @@ import { IndodaxClient } from './tools/indodax-api';
 import { TradeRepository } from './trade-repository';
 import { PaperExecutor } from './paper-executor';
 import { CompoundingEngine } from './compounding-engine';
+import { decisionAuditRepo } from './decision-audit-repository';
+import { sendTelegramMessage } from '@/shared/telegram-bot';
 
 let _redisAvailable = false;
 let _devTimer: ReturnType<typeof setInterval> | null = null;
@@ -158,6 +160,24 @@ export async function executeTradingCycle(): Promise<CycleResult> {
             reason: score?.reason,
           }, 'Candidate evaluated');
 
+          // Phase 1: Immutable decision audit
+          await decisionAuditRepo.logDecision({
+            trigger: 'cron',
+            domain: 'quant',
+            action: 'score_opportunity',
+            pair,
+            inputContext: {
+              alphaHunterScore,
+              aiScore: aiResult?.score,
+              regime: regime?.regime,
+              entryPrice: price,
+            },
+            finalScore: score?.score,
+            chosenAction: score?.action,
+            rationale: score?.reason,
+            confidence: score?.score ? score.score / 100 : undefined,
+          });
+
           if (score?.action === 'MARKET_BUY' || score?.action === 'LIMIT_ENTRY') {
             const balance = await repo.getAccountBalance(accountId);
             const sizing = CompoundingEngine.calculatePositionSize({
@@ -197,6 +217,16 @@ export async function executeTradingCycle(): Promise<CycleResult> {
             if (trade.success) {
               result.opened++;
               logger.info({ pair, entry: entryPrice, score: score.score }, 'Trading cycle opened position');
+
+              await decisionAuditRepo.logDecision({
+                trigger: 'cron',
+                domain: 'quant',
+                action: 'paper_open',
+                pair,
+                inputContext: { entryPrice, quantity, riskAmount },
+                chosenAction: 'PAPER_OPEN',
+                outcome: { positionId: (trade as any).id ?? 'unknown' },
+              });
             }
           }
         } catch (err) {
@@ -218,6 +248,10 @@ export async function executeTradingCycle(): Promise<CycleResult> {
     result.errors.push(msg);
     logger.error({ error: msg }, 'Trading cycle failed');
   }
+
+  // Phase 1: Telegram notification skeleton
+  const summary = `Cycle: scanned=${result.scanned} candidates=${result.candidates} opened=${result.opened} errors=${result.errors.length}`;
+  sendTelegramMessage(summary).catch(() => {});
 
   return result;
 }

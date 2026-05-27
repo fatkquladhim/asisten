@@ -5,6 +5,43 @@ import { logger } from '@/shared/logger';
 const BASE_URL = 'https://indodax.com';
 const TAPI_URL = 'https://indodax.com/tapi';
 
+/**
+ * INDODAX API CLIENT — SECURITY AUDIT & 2026 HARDENING NOTES
+ * 
+ * Performed as part of Phase 1 (paper-only hardening, per mentorship blueprint).
+ * 
+ * STRENGTHS (current):
+ * - Only exposes safe methods: getInfo, openOrders, cancelOrder, trade (no withdraw* methods).
+ * - HMAC-SHA512 signing correct.
+ * - Nonce = Date.now() (reasonable for single-instance).
+ * - Global 1s rate limit (conservative vs docs 20 req/s trade).
+ * - Min buy amount guard (Rp 10k).
+ * - Public endpoints cached.
+ * - Proper error mapping for success=0.
+ * 
+ * 2026 CRITICAL RISKS & REQUIRED HARDENING (from SoK papers + Indodax docs):
+ * - Nonce-only (no timestamp + recvWindow): Replay risk if clock skew or multi-instance.
+ *   Docs (2026): Prefer timestamp + recvWindow (default 5000ms) for better protection.
+ * - No client_order_id support: Hard to reconcile partial fills / idempotency.
+ * - No support for new Trade API v2 (tapi.indodax.com) — old history methods deprecated Apr 2026.
+ * - rateLimit too coarse; no per-method differentiation.
+ * - API key assumptions: MUST be created with "spot only, no withdrawal" + IP whitelist on Indodax side.
+ *   Never share key between agent and human ops. Rotate on suspicion.
+ * - No origin / sandbox enforcement here (WS layer will need strict egress).
+ * - Logging: Currently safe (no secrets), but avoid logging full trade payloads in high-sec envs.
+ * - For live: This client must ONLY be used from Execution Guardian (never directly from LLM/orchestrator).
+ * 
+ * NEXT (Phase 1/2):
+ * - Add timestamp + recvWindow mode (configurable).
+ * - Add client_order_id + market order + time_in_force support.
+ * - Migrate relevant history to /api/v2/* .
+ * - WS layer (separate) for real-time (lower polling surface, better recon via private WS).
+ * - Per-key scoping in config (INDODAX_PAPER_KEY vs INDODAX_LIVE_KEY).
+ * 
+ * LETHAL TRIFECTA MITIGATION: This file provides DATA + EXEC. Guard at call sites (RiskManager + Guardian).
+ * Never allow untrusted LLM output to directly construct privateRequest params without validation.
+ */
+
 // ── Public API Types ────────────────────────────────────────
 
 export interface IndodaxTicker {
@@ -140,6 +177,11 @@ export class IndodaxClient {
   constructor() {
     this.apiKey = env.INDODAX_API_KEY ?? '';
     this.secretKey = env.INDODAX_SECRET_KEY ?? '';
+    // SECURITY (2026): 
+    // - Create SEPARATE keys for paper vs live (INDODAX_PAPER_KEY / INDODAX_LIVE_KEY planned).
+    // - On Indodax dashboard: restrict key to "Trade" only, disable Withdraw, set IP whitelist if possible.
+    // - Never use the same key for this agent and manual trading.
+    // - Rotate keys on any suspicion of compromise. Log key usage (not secret).
   }
 
   get isConfigured(): boolean {
@@ -153,6 +195,8 @@ export class IndodaxClient {
       await new Promise((resolve) => setTimeout(resolve, this.minInterval - elapsed));
     }
     this.lastRequestTime = Date.now();
+    // NOTE: 1s global is safe but conservative. Indodax 2026: 20 req/s per account/pair for trade,
+    // 30 req/s for cancel. Per-method backoff + adaptive limiter recommended for Phase 2.
   }
 
   private getCached<T>(key: string): T | null {
@@ -241,6 +285,9 @@ export class IndodaxClient {
 
     await this.rateLimit();
 
+    // SECURITY: Nonce = Date.now(). Docs recommend timestamp + recvWindow for replay protection.
+    // TODO (Phase 2): Add config flag for timestamp+recvWindow mode (default 5000ms).
+    // Multi-instance or clock skew can cause nonce reuse errors or replay windows.
     const nonce = Date.now().toString();
     const bodyParams = new URLSearchParams();
     bodyParams.set('method', method);
@@ -253,6 +300,7 @@ export class IndodaxClient {
     const payload = bodyParams.toString();
     const sign = createHmac('sha512', this.secretKey).update(payload).digest('hex');
 
+    // SECURITY: Never log payload in production (contains amounts, pair, etc.).
     logger.debug({ method, nonce }, 'Indodax private request');
 
     const response = await fetch(TAPI_URL, {
@@ -321,6 +369,10 @@ export class IndodaxClient {
     }
 
     const params: Record<string, string | number> = { pair, type, price: cleanPrice };
+
+    // TODO (Phase 1/2): Support client_order_id (for idempotency + reconciliation with private WS fills).
+    // Support order_type: 'market' (buy only via idr amount), time_in_force: 'GTC'|'MOC'.
+    // See Indodax Trade API v2 docs for new endpoints.
 
     const coin = pair.split('_')[0] ?? '';
     if (type === 'buy') {

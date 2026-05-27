@@ -8,6 +8,7 @@ import { Synthesizer } from './synthesizer';
 import type { AgentState, ExecutionStep, AgentError } from '@/shared/types';
 import { AgentRegistry } from '@/agents/registry';
 import { logger } from '@/shared/logger';
+import { decisionAuditRepo } from '@/agents/quant/decision-audit-repository';
 
 const MAX_RETRIES = 3;
 
@@ -223,6 +224,24 @@ export class Orchestrator {
       },
       'Orchestrator completed',
     );
+
+    // Phase 1 minimal audit: log high-level orchestrator run (especially if quant involved)
+    const quantSteps = finalState.plan.filter((s) => s.agent === 'quant');
+    if (quantSteps.length > 0 || finalState.errors.length > 0) {
+      await decisionAuditRepo.logDecision({
+        conversationId: finalState.meta.conversationId,
+        trigger: finalState.meta.trigger,
+        domain: 'orchestrator',
+        action: 'run',
+        inputContext: {
+          steps: finalState.plan.length,
+          quantSteps: quantSteps.length,
+          errors: finalState.errors.length,
+        },
+        outcome: { responseLength: lastMessage?.content?.length ?? 0 },
+        error: finalState.errors.length > 0 ? finalState.errors[0]!.message : undefined,
+      });
+    }
 
     return lastMessage?.content ?? 'No response generated.';
   }

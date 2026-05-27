@@ -62,6 +62,11 @@ export class QuantAgent extends AgentBase {
     this.repo = new TradeRepository();
     this.paperExecutor = new PaperExecutor(this.repo, client);
     this.perfTracker = new PerformanceTracker(this.repo);
+
+    // Phase 1: Start real-time WS (non-blocking). Improves scheduler latency & reduces REST load.
+    this.feed.startRealTime(['btcidr', 'ethidr', 'solidr', 'xrpidr']).catch((e) =>
+      logger.warn({ error: (e as Error).message }, 'WS real-time start failed (will fallback to REST)'),
+    );
   }
 
   override async execute(
