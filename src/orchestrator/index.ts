@@ -173,8 +173,6 @@ export class Orchestrator {
       return { ...state, messages: [...state.messages, response] };
     });
 
-    graph.addConditionalEdges('dispatch_agents', () => 'synthesize');
-
     graph.addEdge(START, 'summarize_context');
     graph.addEdge('summarize_context', 'classify_intent');
     graph.addEdge('classify_intent', 'inject_memory');
