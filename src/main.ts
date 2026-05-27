@@ -5,7 +5,8 @@ import { quantQueue, closeQueues } from '@/queue/index';
 import { quantWorker, closeWorkers } from '@/queue/workers';
 import { EmbeddingClient, MemoryStore } from '@/memory/index';
 import { LLMClient } from '@/shared/llm';
-import { setupTradingScheduler, tradingCycleQueue } from '@/agents/quant/trading-scheduler';
+import { setupTradingScheduler, tradingCycleQueue, setOrchestratorSingleton } from '@/agents/quant/trading-scheduler';
+import { PersistentRiskManager } from '@/agents/quant/tools/persistent-risk-manager';
 import { CyberAgent } from '@/agents/cyber/index';
 import { ErpAgent } from '@/agents/erp/index';
 import { IndodaxClient } from '@/agents/quant/tools/indodax-api';
@@ -68,7 +69,10 @@ async function main(): Promise<void> {
     registry,
   );
 
-  const app = createApp(orchestrator);
+  // Phase 1 fix: inject orchestrator singleton to scheduler
+  setOrchestratorSingleton(orchestrator);
+
+const app = createApp(orchestrator);
 
   const server = serve(
     {
@@ -83,6 +87,13 @@ async function main(): Promise<void> {
   const shutdown = async () => {
     logger.info('Shutting down gracefully...');
     server.close();
+    // Phase 1 fix: close RiskManager Redis
+    try {
+      const agent = registry.get('quant') as any;
+      if (agent?.riskManager?.close) await agent.riskManager.close();
+    } catch {
+      // ignore
+    }
     await closeWorkers();
     await closeQueues();
     await tradingCycleQueue.close();

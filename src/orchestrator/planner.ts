@@ -67,19 +67,50 @@ export class Planner {
         return [];
       }
 
-      const steps: ExecutionStep[] = parsed.steps.map((s, i) => ({
-        id: s.id ?? `step_${i + 1}`,
-        agent: (['quant', 'erp', 'cyber', 'lifestyle'].includes(s.agent ?? '')
-          ? s.agent!
-          : 'quant') as ExecutionStep['agent'],
-        action: s.action ?? 'unknown',
-        params: (s.params as Record<string, unknown>) ?? {},
-        dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn : [],
-        async: s.async === true,
-        ...(s.fallbackAction ? { fallbackAction: s.fallbackAction } : {}),
-      }));
+      // Phase 1 fix: Validate actions against whitelist (prevents "unknown action" errors)
+      const VALID_QUANT_ACTIONS = new Set([
+        'get_price', 'get_ticker', 'get_ohlcv', 'get_historical_data',
+        'get_depth', 'get_all_pairs', 'get_all_tickers', 'get_info',
+        'open_orders', 'cancel_order', 'execute_trade',
+        'analyze_trend', 'analyze_smc', 'analyze_orderbook',
+        'calculate_targets', 'get_narrative_insight', 'get_narrative_report',
+        'detect_whale', 'analyze_meme_rotation', 'scan_sniper_entry',
+        'check_emergency', 'get_macro_regime', 'check_kill_switch',
+        'validate_execution', 'validate_trade_size', 'validate_correlation',
+        'calculate_position_size', 'record_trade_result',
+        'calculate_exit_plan', 'monitor_position',
+        'paper_open', 'paper_close', 'paper_monitor', 'get_open_positions', 'get_performance',
+        'calculate_position_sizing', 'calculate_reinvest', 'scan_market',
+        'analyze_with_ai', 'analyze_with_ai_consensus',
+        'score_opportunity',
+      ]);
 
-      logger.info({ stepCount: steps.length }, 'Plan generated');
+      const steps: ExecutionStep[] = parsed.steps
+        .map((s, i) => {
+          const action = s.action ?? 'unknown';
+          const agent = (['quant', 'erp', 'cyber', 'lifestyle'].includes(s.agent ?? '')
+            ? s.agent!
+            : 'quant') as ExecutionStep['agent'];
+
+          // Filter out unknown quant actions with warning
+          if (agent === 'quant' && !VALID_QUANT_ACTIONS.has(action)) {
+            logger.warn({ action, agent }, 'Unknown quant action in plan — skipping step');
+            return null;
+          }
+
+          return {
+            id: s.id ?? `step_${i + 1}`,
+            agent,
+            action,
+            params: (s.params as Record<string, unknown>) ?? {},
+            dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn : [],
+            async: s.async === true,
+            ...(s.fallbackAction ? { fallbackAction: s.fallbackAction } : {}),
+          };
+        })
+        .filter((s): s is ExecutionStep => s !== null);
+
+      logger.info({ stepCount: steps.length }, 'Plan generated (validated)');
       return steps;
     } catch (err) {
       logger.error({ raw, error: (err as Error).message }, 'Failed to parse planner JSON');

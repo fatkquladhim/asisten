@@ -1,4 +1,4 @@
-import { env, OPENAI_BASE_URL } from '@/config/index';
+import { env } from '@/config/index';
 import { logger } from '@/shared/logger';
 
 export interface LLMMessage {
@@ -19,9 +19,9 @@ export class LLMClient {
   private defaultModel: string;
 
   constructor() {
-    this.apiKey = env.OPENAI_API_KEY || env.SUMOPOD_API_KEY || '';
-    this.baseUrl = env.SUMOPOD_BASE_URL || OPENAI_BASE_URL;
-    this.defaultModel = this.baseUrl === OPENAI_BASE_URL ? 'gpt-4o-mini' : 'qwen/qwen3-30b-a3b-instruct-2507';
+    this.apiKey = env.SUMOPOD_API_KEY || '';  // Only Sumopod (not OpenAI)
+    this.baseUrl = env.SUMOPOD_BASE_URL || 'https://ai.sumopod.com/v1';
+    this.defaultModel = 'qwen3.6-flash';  // Cheapest: $0.13/1M input, $0.75/1M output (50% off)
   }
 
   get isConfigured(): boolean {
@@ -29,7 +29,7 @@ export class LLMClient {
   }
 
   get provider(): string {
-    return this.baseUrl === OPENAI_BASE_URL ? 'openai' : 'sumopod';
+    return 'sumopod';  // Always sumopod now
   }
 
   async generateCompletion(

@@ -4,8 +4,8 @@ import { IndodaxClient, IndodaxTicker } from './indodax-api';
 import { AIResult } from './ai-consensus';
 import { logger } from '@/shared/logger';
 
-const DEFAULT_FREE_MODELS = 'qwen/qwen3-30b-a3b-instruct-2507,openai/gpt-oss-20b,MiniMax-M2.7-highspeed';
-const DEFAULT_FALLBACK_MODELS = 'gemini/gemini-2.0-flash-lite,deepseek-v4-flash';
+const DEFAULT_FREE_MODELS = 'qwen3.6-flash,qwen3.6-plus,gemma-4-31b-it';
+const DEFAULT_FALLBACK_MODELS = 'deepseek-v4-flash,deepseek-v4-pro';
 
 export class AISentinel {
   private apiKey: string;
@@ -126,8 +126,9 @@ export class AISentinel {
   private buildPrompt(data: string, pair: string): string {
     const isMemeOrAI = ['doge', 'pepe', 'fet', 'pippin', 'fartcoin', 'zerebro', 'bonk', 'wif']
       .some((s) => pair.includes(s));
+    // Phase 1 fix: No confirmation bias. Meme/AI assets require stricter scrutiny.
     const booster = isMemeOrAI
-      ? 'Koin ini dalam narasi panas (Meme/AI). Cari alasan untuk BUY jika setup teknikal mendukung.'
+      ? 'WARNING: High-volatility Meme/AI asset. Require score >= 80 and HIGH confidence before BUY. Default to AVOID.'
       : '';
 
     return [

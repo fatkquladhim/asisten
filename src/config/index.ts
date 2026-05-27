@@ -22,5 +22,3 @@ const envSchema = z.object({
 });
 
 export const env = envSchema.parse(process.env);
-
-export const OPENAI_BASE_URL = 'https://api.openai.com/v1';

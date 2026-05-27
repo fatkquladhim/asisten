@@ -14,6 +14,7 @@ import { EmergencyShield } from './tools/emergency-shield';
 import { MacroRegimeEngine } from './tools/macro-regime';
 import { ExitManager } from './tools/exit-manager';
 import { RiskManager, RiskConfig } from './tools/risk-manager';
+import { PersistentRiskManager } from './tools/persistent-risk-manager';
 import { AIConsensus } from './tools/ai-consensus';
 import { AISentinel } from './tools/ai-sentinel';
 import { TradeRepository } from './trade-repository';
@@ -35,7 +36,7 @@ export class QuantAgent extends AgentBase {
   private sniperEntry: SniperEntry;
   private emergencyShield: EmergencyShield;
   private macroRegime: MacroRegimeEngine;
-  private riskManager: RiskManager;
+  private riskManager: PersistentRiskManager;
   private aiSentinel: AISentinel;
   private repo: TradeRepository;
   private paperExecutor: PaperExecutor;
@@ -54,7 +55,8 @@ export class QuantAgent extends AgentBase {
     this.sniperEntry = new SniperEntry(this.marketIntel);
     this.emergencyShield = new EmergencyShield(this.marketIntel);
     this.macroRegime = new MacroRegimeEngine(this.marketIntel);
-    this.riskManager = new RiskManager(riskConfig ?? {
+    // Phase 1 fix: Use PersistentRiskManager for Redis-backed state across cycles
+    this.riskManager = new PersistentRiskManager(riskConfig ?? {
       maxPositionSizePercent: 10,
       maxDrawdownDailyPercent: 5,
     });
@@ -62,12 +64,8 @@ export class QuantAgent extends AgentBase {
     this.repo = new TradeRepository();
     this.paperExecutor = new PaperExecutor(this.repo, client);
     this.perfTracker = new PerformanceTracker(this.repo);
-
-    // Phase 1: Start real-time WS (non-blocking). Improves scheduler latency & reduces REST load.
-    this.feed.startRealTime(['btcidr', 'ethidr', 'solidr', 'xrpidr']).catch((e) =>
-      logger.warn({ error: (e as Error).message }, 'WS real-time start failed (will fallback to REST)'),
-    );
   }
+
 
   override async execute(
     step: ExecutionStep,
@@ -224,13 +222,13 @@ export class QuantAgent extends AgentBase {
       case 'validate_execution': {
         const ask = step.params['askPrice'] as number;
         const bid = step.params['bidPrice'] as number;
-        return { valid: this.riskManager.validateExecution(ask, bid) };
+        return { valid: await this.riskManager.validateExecution(ask, bid) };
       }
 
       case 'validate_correlation': {
         const pair = (step.params['pair'] as string) ?? '';
         const openPairs = (step.params['openPairs'] as string[]) ?? [];
-        return { valid: this.riskManager.validateCorrelation(pair, openPairs) };
+        return { valid: await this.riskManager.validateCorrelation(pair, openPairs) };
       }
 
       case 'calculate_position_size': {
@@ -238,14 +236,14 @@ export class QuantAgent extends AgentBase {
         const entry = step.params['entryPrice'] as number;
         const sl = step.params['stopLoss'] as number;
         const riskPct = (step.params['riskPercent'] as number) ?? 1;
-        return { positionSize: this.riskManager.calculatePositionSize(balance, entry, sl, riskPct) };
+        return { positionSize: await this.riskManager.calculatePositionSize(balance, entry, sl, riskPct) };
       }
 
       case 'record_trade_result': {
         const type = step.params['type'] as 'win' | 'loss';
         const amount = (step.params['amount'] as number) ?? 0;
-        if (type === 'loss') this.riskManager.recordLoss(amount);
-        else this.riskManager.recordWin();
+        if (type === 'loss') await this.riskManager.recordLoss(amount);
+        else await this.riskManager.recordWin();
         return { recorded: true };
       }
 

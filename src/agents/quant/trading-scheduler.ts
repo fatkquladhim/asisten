@@ -7,11 +7,32 @@ import { IndodaxClient } from './tools/indodax-api';
 import { TradeRepository } from './trade-repository';
 import { PaperExecutor } from './paper-executor';
 import { CompoundingEngine } from './compounding-engine';
+import { PerformanceTracker } from './performance-tracker';
 import { decisionAuditRepo } from './decision-audit-repository';
 import { sendTelegramMessage } from '@/shared/telegram-bot';
+import { Orchestrator } from '@/orchestrator/index';
+import type { Orchestrator as OrchestratorType } from '@/orchestrator/index';
 
 let _redisAvailable = false;
 let _devTimer: ReturnType<typeof setInterval> | null = null;
+
+// Phase 1 fix: Singleton QuantAgent untuk hindari WS leak + persistent risk state
+let _quantAgentSingleton: QuantAgent | null = null;
+let _orchestratorSingleton: OrchestratorType | null = null;
+
+/**
+ * Dipanggil dari main.ts untuk inject orchestrator singleton.
+ */
+export function setOrchestratorSingleton(orchestrator: OrchestratorType): void {
+  _orchestratorSingleton = orchestrator;
+}
+
+export function getQuantAgentSingleton(client: IndodaxClient): QuantAgent {
+  if (!_quantAgentSingleton) {
+    _quantAgentSingleton = new QuantAgent(client);
+  }
+  return _quantAgentSingleton;
+}
 
 export const tradingCycleQueue = new Queue('trading-cycle', {
   connection: { url: env.REDIS_URL },
@@ -81,13 +102,35 @@ export interface CycleResult {
 export async function executeTradingCycle(): Promise<CycleResult> {
   const result: CycleResult = { scanned: 0, candidates: 0, opened: 0, monitored: 0, errors: [] };
 
-  try {
-    const client = new IndodaxClient();
-    const agent = new QuantAgent(client);
-    const repo = new TradeRepository();
-    const executor = new PaperExecutor(repo, client);
+  // Phase 1 fix #2 + #5: Use orchestrator singleton if available (memory+context). Fallback to direct agent with shared singleton.
+  if (_orchestratorSingleton) {
+    // Route through orchestrator for full context + memory
+    try {
+      const response = await _orchestratorSingleton.run(
+        'Execute trading cycle: scan market, evaluate opportunities, manage open positions',
+        'system',
+        'cron',
+      );
+      logger.info({ response }, 'Trading cycle via orchestrator completed (Phase 1 fix)');
+      // Parse response to extract actions (TBD: define structured response)
+    } catch (e) {
+      const msg = (e as Error).message;
+      result.errors.push(msg);
+      logger.error({ error: msg }, 'Orchestrator cycle failed');
+    }
+    return result;
+  }
 
-    const accountId = await repo.getDefaultAccount();
+  // Fallback: use singleton QuantAgent to avoid WS leak
+  try {
+        const client = new IndodaxClient();
+        const agent = getQuantAgentSingleton(client);
+        const repo = new TradeRepository();
+        const executor = new PaperExecutor(repo, client);
+        // Phase 1 fix: use actual performance data for compounding
+        const perfTracker = new PerformanceTracker(repo);
+
+        const accountId = await repo.getDefaultAccount();
     if (!accountId) {
       result.errors.push('No account found');
       return result;
@@ -178,19 +221,24 @@ export async function executeTradingCycle(): Promise<CycleResult> {
             confidence: score?.score ? score.score / 100 : undefined,
           });
 
-          if (score?.action === 'MARKET_BUY' || score?.action === 'LIMIT_ENTRY') {
-            const balance = await repo.getAccountBalance(accountId);
-            const sizing = CompoundingEngine.calculatePositionSize({
-              initialBalance: balance,
-              currentBalance: balance,
-              winRate: 0.5,
-              avgWinPercent: 5,
-              avgLossPercent: 3,
-              reinvestRatio: 0.5,
-            });
-            const riskAmount = balance * (sizing.riskPercent / 100);
-            const quantity = String(riskAmount / price);
-            const entryPrice = String(price);
+if (score?.action === 'MARKET_BUY' || score?.action === 'LIMIT_ENTRY') {
+             const balance = await repo.getAccountBalance(accountId);
+             
+             // Phase 1 fix: use actual performance data (dengan fallback konservatif)
+             const perfReport = accountId ? await perfTracker.getReport(accountId) : null;
+             const perf = perfReport?.weekly ?? perfReport?.monthly;
+
+             const sizing = CompoundingEngine.calculatePositionSize({
+               initialBalance: balance,
+               currentBalance: balance,
+               winRate: perf?.winRate ? perf.winRate : 0.45,        // fallback di bawah 50%
+               avgWinPercent: perf?.avgPnlPerTrade ? Math.max(1, perf.avgPnlPerTrade) : 3, // fallback
+               avgLossPercent: perf?.avgPnlPerTrade ? Math.abs(Math.min(perf.avgPnlPerTrade, -4)) : 4, // fallback
+               reinvestRatio: 0.4, // konservatif untuk early stage
+             });
+             const riskAmount = balance * (sizing.riskPercent / 100);
+             const quantity = String(riskAmount / price);
+             const entryPrice = String(price);
 
             let sl: string | undefined;
             let tp1: string | undefined;
