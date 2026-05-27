@@ -1,8 +1,6 @@
-version: '3.9'
-
 services:
   db:
-    image: timescale/timescaledb:2-pg16-latest
+    image: timescale/timescaledb:latest-pg16
     environment:
       POSTGRES_DB: asisten
       POSTGRES_USER: asisten
